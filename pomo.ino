@@ -5,23 +5,23 @@
 #include <EEPROM.h>
 #include <JC_Button.h>
 
-#include "tomat.h"
 
 /**
  * TODO:
  *  - Fixa tomat
- *  - Setup mode:
- *    - Editera tider
- *    - Spara tider till EEPROM
  *  - Nollställa tomaträknare
  *    - Skriv till EEPROM
  *  - Paus/play/stop-markör / mode-markör
- *
  *  - Programmera buzzer-alarm
  */
 
 #define DISABLE_SOUND
 #define DISABLE_TOMATOES
+#define DEBUG_OUTPUT
+
+#ifndef DISABLE_TOMATOES
+#include "tomat.h"
+#endif
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -72,11 +72,11 @@ MyButton minus_button(7);
 #define TOMATO_COUNTER_MAX 99
 #define TIME_MIN_MAX 99
 #define TIME_SEC_MAX 59
-#define TOMATO_COUNTER_ADDRESS 0
-#define REST_SETUP_TIME_MIN_ADDRESS 1
-#define REST_SETUP_TIME_SEC_ADDRESS 2
-#define WORK_SETUP_TIME_MIN_ADDRESS 3
-#define WORK_SETUP_TIME_SEC_ADDRESS 4
+#define EADDR_TOMATO_COUNTER      0
+#define EADDR_REST_SETUP_TIME_MIN 1
+#define EADDR_REST_SETUP_TIME_SEC 2
+#define EADDR_WORK_SETUP_TIME_MIN 3
+#define EADDR_WORK_SETUP_TIME_SEC 4
 
 enum class InputEvent {
     NoEvent,
@@ -99,12 +99,12 @@ enum class State {
 };
 
 struct Time {
-    uint8_t min, sec;
-    static Time from_seconds(uint16_t sec) {
+    int8_t min, sec;
+    static Time from_seconds(int16_t sec) {
         return {sec/60, sec%60};
     }
-    uint16_t to_seconds() const {
-        return uint16_t(min)*60 + sec;
+    int16_t to_seconds() const {
+        return int16_t(min)*60 + sec;
     }
 };
 
@@ -124,8 +124,8 @@ Time work_setup_time; // initialize from EEPROM
 
 TimerType current_timer = TimerType::Work;
 
-uint32_t timer_seconds_left = 0;
-uint32_t timer_end = 0;
+int32_t timer_seconds_left = 0;
+int32_t timer_end = 0;
 
 int8_t tomato_counter; // initialize from EEPROM
 
@@ -133,6 +133,9 @@ uint32_t alarm_blink_next_time = 0;
 uint32_t alarm_blink_period_ms = 250;
 
 bool display_dimmed = false;
+
+#define SETUP_CURSORS_N_POS 4
+int8_t setup_cursor_idx = -1;
 
 void process_buttons() {
     input_event = InputEvent::NoEvent;
@@ -185,6 +188,15 @@ void process_timer() {
     }
 }
 
+int8_t wrap(int8_t x, int8_t maxval) {
+    if( x < 0) {
+        x+= (maxval+1);
+    } else {
+        x = x % (maxval+1);
+    }
+    return x;
+}
+
 void handle_events() {
     if(state == State::Running) {
         if(timer_seconds_left <= 0) {
@@ -193,31 +205,39 @@ void handle_events() {
             alarm_blink_next_time = millis() + alarm_blink_period_ms;
             if(current_timer == TimerType::Work) {
                  tomato_counter = (tomato_counter+1)%(TOMATO_COUNTER_MAX+1);
-                 EEPROM.write(TOMATO_COUNTER_ADDRESS, tomato_counter);
+                 EEPROM.write(EADDR_TOMATO_COUNTER, tomato_counter);
             }
         } else if(input_event == InputEvent::PlayPauseShortPress) {
-            Serial.print("Pausing. Timer_seconds_left: ");
+#ifdef DEBUG_OUTPUT
+            Serial.print(F("Pausing. Timer_seconds_left: "));
             Serial.println(timer_seconds_left);
+#endif
             state = State::Paused;
         } else if(input_event == InputEvent::PlayPauseLongPress) {
             state = State::Idle;
-            Serial.println("Stopping. Going to Idle.");
+#ifdef DEBUG_OUTPUT
+            Serial.println(F("Stopping. Going to Idle."));
+#endif
         }
     } else if(state== State::Paused) {
         if(input_event == InputEvent::PlayPauseShortPress) {
             state = State::Running;
             timer_end = now() + timer_seconds_left;
-            Serial.print("Resuming. Timer_seconds_left: ");
+#ifdef DEBUG_OUTPUT
+            Serial.print(F("Resuming. Timer_seconds_left: "));
             Serial.print(timer_seconds_left);
-            Serial.print(", timer_end: ");
+            Serial.print(F(", timer_end: "));
             Serial.println(timer_end);
+#endif
         } else if(input_event == InputEvent::PlayPauseLongPress) {
             state = State::Idle;
-            Serial.println("Stopping. Going to Idle.");
+#ifdef DEBUG_OUTPUT
+            Serial.println(F("Stopping. Going to Idle."));
+#endif
         }
     } else if(state == State::Idle) {
         if(input_event == InputEvent::PlayPauseShortPress) {
-            uint16_t timer_length;
+            int16_t timer_length;
             if(current_timer == TimerType::Work) {
                 timer_length = work_setup_time.to_seconds();
             } else {
@@ -226,33 +246,97 @@ void handle_events() {
             timer_seconds_left = timer_length;
             state = State::Running;
             timer_end = now() + timer_seconds_left;
-            Serial.print("Starting to run. timer_seconds_left: ");
+#ifdef DEBUG_OUTPUT
+            Serial.print(F("Starting to run. timer_seconds_left: "));
             Serial.print(timer_seconds_left);
-            Serial.print(", timer_end: ");
+            Serial.print(F(", timer_end: "));
             Serial.println(timer_end);
+#endif
         } else if(input_event == InputEvent::PlusShortPress) {
             current_timer = current_timer==TimerType::Work ? TimerType::Rest : TimerType::Work;
-            Serial.print("Switching timer to ");
-            Serial.println(current_timer==TimerType::Work ? "Work" : "Rest");
+#ifdef DEBUG_OUTPUT
+            Serial.print(F("Switching timer to "));
+            Serial.println(current_timer==TimerType::Work ? F("Work") : F("Rest"));
+#endif
         } else if(input_event == InputEvent::MinusShortPress) {
             current_timer = current_timer==TimerType::Work ? TimerType::Rest : TimerType::Work;
-            Serial.print("Switching timer to ");
-            Serial.println(current_timer==TimerType::Work ? "Work" : "Rest");
-            /* case InputEvent::SetupLongPress: */
-            /* Serial.println("Switching to Setup state"); */
-            /*     state = State::Setup; */
-            /*     break; */
+#ifdef DEBUG_OUTPUT
+            Serial.print(F("Switching timer to "));
+            Serial.println(current_timer==TimerType::Work ? F("Work") : F("Rest"));
+#endif
+        } else if(input_event == InputEvent::SetupLongPress) {
+#ifdef DEBUG_OUTPUT
+            Serial.println(F("Switching to Setup state"));
+#endif
+            setup_cursor_idx = 0;
+            state = State::Setup;
         }
     } else if(state == State::Ringing) {
         if(input_event != InputEvent::NoEvent) {
             state = State::Idle;
             current_timer = current_timer==TimerType::Work ? TimerType::Rest : TimerType::Work;
-            Serial.println("Leaving ringing to Idle");
+#ifdef DEBUG_OUTPUT
+            Serial.println(F("Leaving ringing to Idle"));
+#endif
         }
     } else if(state == State::Setup) {
         if(input_event==InputEvent::SetupLongPress) {
-    /*         state = State::Idle; */
-            /* Serial.println("Going back to Idle from Setup"); */
+            state = State::Idle;
+            setup_cursor_idx = -1;
+#ifdef DEBUG_OUTPUT
+            Serial.println(F("Going back to Idle from Setup"));
+#endif
+        } else if(input_event==InputEvent::SetupShortPress) {
+            setup_cursor_idx = (setup_cursor_idx+1)%SETUP_CURSORS_N_POS;
+#ifdef DEBUG_OUTPUT
+            Serial.println(F("Advancing cursor."));
+#endif
+        } else if(input_event==InputEvent::MinusShortPress) {
+#ifdef DEBUG_OUTPUT
+            Serial.print(F("Decrementing entry "));
+            Serial.println(setup_cursor_idx);
+#endif
+            switch(setup_cursor_idx) {
+            case 0:
+                work_setup_time.min = wrap(work_setup_time.min-1,TIME_MIN_MAX);
+                EEPROM.write(EADDR_WORK_SETUP_TIME_MIN, work_setup_time.min);
+                break;
+            case 1:
+                work_setup_time.sec = wrap(work_setup_time.sec-1, TIME_SEC_MAX);
+                EEPROM.write(EADDR_WORK_SETUP_TIME_SEC, work_setup_time.sec);
+                break;
+            case 2:
+                rest_setup_time.min = wrap(rest_setup_time.min-1, TIME_MIN_MAX);
+                EEPROM.write(EADDR_REST_SETUP_TIME_MIN, rest_setup_time.min);
+                break;
+            case 3:
+                rest_setup_time.sec = wrap(rest_setup_time.sec-1, TIME_SEC_MAX);
+                EEPROM.write(EADDR_REST_SETUP_TIME_SEC, rest_setup_time.sec);
+                break;
+            }
+        } else if(input_event==InputEvent::PlusShortPress) {
+#ifdef DEBUG_OUTPUT
+            Serial.print(F("Incrementing entry "));
+            Serial.println(setup_cursor_idx);
+#endif
+            switch(setup_cursor_idx) {
+            case 0:
+                work_setup_time.min = wrap(work_setup_time.min+1, TIME_MIN_MAX);
+                EEPROM.write(EADDR_WORK_SETUP_TIME_MIN, work_setup_time.min);
+                break;
+            case 1:
+                work_setup_time.sec = wrap(work_setup_time.sec+1, TIME_SEC_MAX);
+                EEPROM.write(EADDR_WORK_SETUP_TIME_SEC, work_setup_time.sec);
+                break;
+            case 2:
+                rest_setup_time.min = wrap(rest_setup_time.min+1, TIME_MIN_MAX);
+                EEPROM.write(EADDR_REST_SETUP_TIME_MIN, rest_setup_time.min);
+                break;
+            case 3:
+                rest_setup_time.sec = wrap(rest_setup_time.sec+1, TIME_SEC_MAX);
+                EEPROM.write(EADDR_REST_SETUP_TIME_SEC, rest_setup_time.sec);
+                break;
+            }
         }
     }
 }
@@ -335,7 +419,8 @@ void update_display() {
     } else {
         work_time = work_setup_time;
     }
-    display_time(work_time, 10, 66, false, false, 2);
+
+    display_time(work_time, 10, 66, setup_cursor_idx==0, setup_cursor_idx==1, 2);
 
     display_text("Rast", 30, 66);
 
@@ -345,7 +430,7 @@ void update_display() {
     } else {
         rest_time = rest_setup_time;
     }
-    display_time(rest_time, 30+10, 66, false, false, 2);
+    display_time(rest_time, 30+10, 66, setup_cursor_idx==2, setup_cursor_idx==3, 2);
 
     //    if(state != State::
     // Draw indicator triangle
@@ -371,22 +456,25 @@ void setup() {
     pinMode(BUZZER_PIN, OUTPUT);
 #endif
 
-    tomato_counter = min(EEPROM.read(TOMATO_COUNTER_ADDRESS), TOMATO_COUNTER_MAX);
-    rest_setup_time.min = min(EEPROM.read(REST_SETUP_TIME_MIN_ADDRESS),TIME_MIN_MAX);
-    rest_setup_time.sec = min(EEPROM.read(REST_SETUP_TIME_SEC_ADDRESS),TIME_SEC_MAX);
-    work_setup_time.min = min(EEPROM.read(WORK_SETUP_TIME_MIN_ADDRESS),TIME_MIN_MAX);
-    work_setup_time.sec = min(EEPROM.read(WORK_SETUP_TIME_SEC_ADDRESS),TIME_SEC_MAX);
+    tomato_counter =      constrain(EEPROM.read(EADDR_TOMATO_COUNTER), 0, TOMATO_COUNTER_MAX);
+    rest_setup_time.min = constrain(EEPROM.read(EADDR_REST_SETUP_TIME_MIN),0,TIME_MIN_MAX);
+    rest_setup_time.sec = constrain(EEPROM.read(EADDR_REST_SETUP_TIME_SEC),0,TIME_SEC_MAX);
+    work_setup_time.min = constrain(EEPROM.read(EADDR_WORK_SETUP_TIME_MIN),0,TIME_MIN_MAX);
+    work_setup_time.sec = constrain(EEPROM.read(EADDR_WORK_SETUP_TIME_SEC),0,TIME_SEC_MAX);
 
    Serial.begin(115200);
 
-   Serial.println("Trying to set up display...");
+#ifdef DEBUG_OUTPUT
+   Serial.println(F("Trying to set up display..."));
+#endif
    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
         Serial.println(F("SSD1306 allocation failed"));
         while(true) {}
     }
 
-    Serial.println("Pomo starting up...");
-    /* state=State::Running; */
+#ifdef DEBUG_OUTPUT
+   Serial.println(F("Pomo starting up..."));
+#endif
 }
 
 void loop() {
