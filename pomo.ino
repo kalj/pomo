@@ -9,8 +9,6 @@
 /**
  * TODO:
  *  - Fixa tomat
- *  - Nollställa tomaträknare
- *    - Skriv till EEPROM
  *  - Paus/play/stop-markör / mode-markör
  *  - Programmera buzzer-alarm
  */
@@ -270,6 +268,12 @@ void handle_events() {
 #endif
             setup_cursor_idx = 0;
             state = State::Setup;
+        } else if(input_event == InputEvent::MinusLongPress) {
+#ifdef DEBUG_OUTPUT
+            Serial.println(F("Clearing tomato counter"));
+#endif
+            tomato_counter = 0;
+            EEPROM.write(EADDR_TOMATO_COUNTER, tomato_counter);
         }
     } else if(state == State::Ringing) {
         if(input_event != InputEvent::NoEvent) {
