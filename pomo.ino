@@ -5,20 +5,38 @@
 #include <EEPROM.h>
 #include <JC_Button.h>
 
+#include "icons.h"
 
 /**
  * TODO:
- *  - Fixa tomat
- *  - Paus/play/stop-markör / mode-markör
  *  - Programmera buzzer-alarm
  */
 
 #define DISABLE_SOUND
-#define DISABLE_TOMATOES
+/* #define DISABLE_TOMATOES */
 #define DEBUG_OUTPUT
 
 #ifndef DISABLE_TOMATOES
 #include "tomat.h"
+#endif
+
+#ifndef DISABLE_SOUND
+#include "notes.h"
+
+#define N_NOTES
+uint16_t melody[N_NOTES] = {
+
+  NOTE_C4, NOTE_G3, NOTE_G3, NOTE_A3, NOTE_G3, NO_NOTE, NOTE_B3, NOTE_C4
+};
+
+// note durations: 4 = quarter note, 8 = eighth note, etc.:
+char noteDurations[N_NOTES] = {
+
+  4, 8, 8, 4, 4, 4, 4, 4
+};
+
+int note_index;
+
 #endif
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
@@ -404,18 +422,14 @@ void update_display() {
 // draw tomato
 #ifndef DISABLE_TOMATOES
     /* display.fillSquareCircle(25, 25, 12, SSD1306_WHITE); */
-    display.drawBitmap(0, 0, tomato_bmp_data, tomato_bmp_width, tomato_bmp_height, SSD1306_WHITE);
+    display.drawBitmap(28, 8, tomato_bmp_data, tomato_bmp_width, tomato_bmp_height, SSD1306_WHITE);
 #endif
 
-    char buf[20];
-#ifndef DISABLE_TOMATOES
-    sprintf(buf, "%2d tomater", tomato_counter);
-#else
-    sprintf(buf, "%2d abcdefg", tomato_counter);
-#endif
-    display_text(buf, 56, 0);
+    char buf[6];
+    sprintf(buf, "%2d", tomato_counter);
+    display_text(buf, 14, 0, false, 2);
 
-    display_text("Jobba", 0, 66);
+    display_text("Jobba", 0, 65);
 
     Time work_time;
     if((state == State::Running || state == State::Paused || state == State::Ringing) && current_timer == TimerType::Work) {
@@ -424,9 +438,9 @@ void update_display() {
         work_time = work_setup_time;
     }
 
-    display_time(work_time, 10, 66, setup_cursor_idx==0, setup_cursor_idx==1, 2);
+    display_time(work_time, 10, 65, setup_cursor_idx==0, setup_cursor_idx==1, 2);
 
-    display_text("Rast", 30, 66);
+    display_text("Rast", 30, 65);
 
     Time rest_time;
     if((state == State::Running || state == State::Paused || state == State::Ringing) && current_timer == TimerType::Rest) {
@@ -434,19 +448,45 @@ void update_display() {
     } else {
         rest_time = rest_setup_time;
     }
-    display_time(rest_time, 30+10, 66, setup_cursor_idx==2, setup_cursor_idx==3, 2);
+    display_time(rest_time, 30+10, 65, setup_cursor_idx==2, setup_cursor_idx==3, 2);
 
-    //    if(state != State::
-    // Draw indicator triangle
-    int8_t indicator_col = 57;
-    int8_t indicator_row = (current_timer == TimerType::Work ? 0 : 30)+12;
-    int8_t triangle_height = 10;
-    int8_t triangle_width  = 5;
-    display.fillTriangle(indicator_col, indicator_row,
-                         indicator_col+triangle_width-1, indicator_row+(triangle_height-1)/2,
-                         indicator_col, indicator_row+triangle_height-1, SSD1306_WHITE);
+    // Draw indicator lines
+    int8_t timer_indicator_col = 60;
+    int8_t timer_indicator_row = (current_timer == TimerType::Work ? 0 : 30);
 
-    display.fillRect(66, 54, SCREEN_WIDTH-66, SCREEN_HEIGHT-54,
+    display.fillRect(timer_indicator_col, timer_indicator_row, 2, 25, SSD1306_WHITE);
+    display.fillRect(timer_indicator_col+66, timer_indicator_row, 2, 25, SSD1306_WHITE);
+
+    int8_t state_indicator_col = 22;
+    int8_t state_indicator_row = 42;
+    int8_t state_indicator_size = 19;
+
+    switch(state) {
+    case State::Idle:
+        display.fillRect(state_indicator_col, state_indicator_row, state_indicator_size,state_indicator_size, SSD1306_WHITE);
+        break;
+    case State::Paused:
+        display.fillRect(state_indicator_col+4, state_indicator_row, 4, state_indicator_size, SSD1306_WHITE);
+        display.fillRect(state_indicator_col+4+8, state_indicator_row, 4, state_indicator_size, SSD1306_WHITE);
+        break;
+    case State::Running: {
+        int8_t triangle_padding = 5;
+        int8_t triangle_height = state_indicator_size;
+        int8_t triangle_width  = (state_indicator_size+1)/2;
+        display.fillTriangle(state_indicator_col+triangle_padding, state_indicator_row,
+                             state_indicator_col+triangle_padding+triangle_width-1, state_indicator_row+(triangle_height-1)/2,
+                             state_indicator_col+triangle_padding, state_indicator_row+triangle_height-1, SSD1306_WHITE);
+    }
+        break;
+    case State::Setup:
+        display.drawBitmap(state_indicator_col+(state_indicator_size-icons_bmp_width)/2, state_indicator_row+(state_indicator_size-icons_bmp_height)/2, gear_bmp_data, icons_bmp_width, icons_bmp_height, SSD1306_WHITE);
+        break;
+    case State::Ringing:
+        display.drawBitmap(state_indicator_col+(state_indicator_size-icons_bmp_width)/2, state_indicator_row+(state_indicator_size-icons_bmp_height)/2, bell_bmp_data, icons_bmp_width, icons_bmp_height, SSD1306_WHITE);
+        break;
+    }
+
+    display.fillRect(65, 54, SCREEN_WIDTH-65, SCREEN_HEIGHT-54,
                         SSD1306_BLACK);
     display.display();
 }
